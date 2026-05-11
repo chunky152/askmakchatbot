@@ -2,47 +2,11 @@ const router = require('express').Router();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
-const nodemailer = require('nodemailer');
+const emailService = require('../services/email');
 const db = require('../config/db');
 const { authLimiter } = require('../middleware/rateLimit');
 const { requireAuth } = require('../middleware/auth');
 const { useSecureCookies } = require('../config/cookies');
-
-function getMailTransport() {
-    if (!process.env.SMTP_HOST) return null;
-    const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    const secure = process.env.SMTP_SECURE === 'true';
-    const opts = {
-        host: process.env.SMTP_HOST,
-        port,
-        secure
-    };
-    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
-        opts.auth = { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS };
-    }
-    // Gmail and most providers use STARTTLS on 587 (not implicit TLS).
-    if (port === 587 && !secure) {
-        opts.requireTLS = true;
-    }
-    return nodemailer.createTransport(opts);
-}
-
-async function sendVerificationMail(to, subject, html) {
-    const transport = getMailTransport();
-    if (!transport) return false;
-    try {
-        await transport.sendMail({
-            from: process.env.SMTP_FROM || '"AskMak" <noreply@localhost>',
-            to,
-            subject,
-            html
-        });
-        return true;
-    } catch (err) {
-        console.warn('Email send failed:', err.message);
-        return false;
-    }
-}
 
 const signupSchema = Joi.object({
     full_name: Joi.string().min(2).max(100).required(),
@@ -55,7 +19,7 @@ function generateCode() {
 }
 
 function smtpConfigured() {
-    return Boolean(process.env.SMTP_HOST && String(process.env.SMTP_HOST).trim());
+    return emailService.smtpConfigured();
 }
 
 /** When false (default except explicit "false"), do not skip sending if SMTP looks configured */
@@ -111,7 +75,7 @@ router.post('/signup', authLimiter, async (req, res, next) => {
 
         const html = `<p>Hi ${value.full_name},</p><p>Your verification code is: <strong>${code}</strong></p><p>This code expires in 15 minutes.</p>`;
         if (wantsEmailVerify) {
-            const emailSent = await sendVerificationMail(value.email, 'Verify your AskMak account', html);
+            const emailSent = await emailService.sendMail(value.email, 'Verify your AskMak account', html);
             if (!emailSent) {
                 await db.query('DELETE FROM users WHERE id = $1', [newUserId]);
                 return res.status(503).json({
@@ -217,7 +181,7 @@ router.post('/resend-verification', authLimiter, async (req, res, next) => {
         const html = `<p>Hi ${result.rows[0].full_name},</p><p>Your new verification code is: <strong>${code}</strong></p><p>This code expires in 15 minutes.</p>`;
 
         if (wantsEmailVerify) {
-            const emailSent = await sendVerificationMail(email, 'Verify your AskMak account', html);
+            const emailSent = await emailService.sendMail(email, 'Verify your AskMak account', html);
             if (!emailSent) {
                 await db.query(
                     'UPDATE users SET verification_code = $1, verification_expires_at = $2 WHERE id = $3',

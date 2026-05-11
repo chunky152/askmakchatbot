@@ -20,6 +20,7 @@ const feedbackRoutes = require('./routes/feedback');
 const memoriesRoutes = require('./routes/memories');
 const healthRoutes = require('./routes/health');
 const adminRoutes = require('./routes/admin');
+const kbRoutes = require('./routes/kb');
 
 const cron = require('./services/cron');
 
@@ -77,7 +78,7 @@ async function waitForDatabase() {
 
 app.use(helmet({
     contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false
+    crossOriginEmbedderPolicy: false,
 }));
 
 app.use(cors({
@@ -90,6 +91,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser(process.env.COOKIE_SECRET));
 
 const publicDir = path.join(__dirname, '..', 'frontend', 'public');
+console.log('Serving static files from:', publicDir);
 
 app.get('/admin.html', requireAdminPage, (req, res) => {
     res.sendFile(path.join(publicDir, 'admin.html'));
@@ -107,6 +109,7 @@ app.use('/api/feedback', feedbackRoutes);
 app.use('/api/memories', memoriesRoutes);
 app.use('/api', healthRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/kb', kbRoutes);
 
 app.get('/{*splat}', (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();

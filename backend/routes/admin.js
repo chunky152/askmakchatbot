@@ -10,6 +10,7 @@ const storage = require('../services/storage');
 const { generateEmbedding, generateEmbeddings } = require('../services/embedding');
 const { chunkText } = require('../services/scraper');
 const { getToolSchemas } = require('../services/mcp/registry');
+const emailService = require('../services/email');
 
 const DOC_BUCKET = process.env.MINIO_BUCKET_DOCUMENTS || 'documents';
 const REF_BUCKET = process.env.MINIO_BUCKET_REFERENCE || 'reference';
@@ -304,6 +305,7 @@ router.patch('/escalations/:id', async (req, res, next) => {
     try {
         const { status, admin_response } = req.body;
         if (!status) return res.status(400).json({ error: 'Status required' });
+
         const updates = ['status = $1', `resolved_at = CASE WHEN $1 = 'resolved' THEN NOW() ELSE resolved_at END`];
         const params = [status];
         let idx = 2;
@@ -312,18 +314,62 @@ router.patch('/escalations/:id', async (req, res, next) => {
             params.push(admin_response);
         }
         params.push(req.params.id);
+
         const result = await db.query(
             `UPDATE escalations SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`,
             params
         );
+
         if (!result.rows.length) return res.status(404).json({ error: 'Not found' });
-        if (admin_response) {
-            const esc = result.rows[0];
+
+        const esc = result.rows[0];
+
+        // If resolved and has an admin response, publish to KB and send email
+        if (status === 'resolved' && admin_response) {
+            // 1. Send feedback email
+            let targetEmail = esc.user_email;
+            if (!targetEmail && esc.chat_id) {
+                const u = await db.query(
+                    `SELECT u.email FROM users u JOIN chats c ON c.user_id = u.id WHERE c.id = $1`,
+                    [esc.chat_id]
+                );
+                if (u.rows.length) targetEmail = u.rows[0].email;
+            }
+
+            if (targetEmail) {
+                const subject = `Update on your AskMak ticket: ${esc.title || 'Inquiry'}`;
+                const html = `<p>Hello,</p><p>Your ticket has been resolved with the following response:</p><p><strong>${admin_response}</strong></p><p>Thank you for using AskMak.</p>`;
+                await emailService.sendMail(targetEmail, subject, html);
+            }
+
+            // 2. Publish to Knowledge Base
+            const kbTitle = esc.title || 'Resolved Inquiry';
+            const kbCategory = esc.category || 'general';
+            const emb = await generateEmbedding(kbTitle + '\n\n' + admin_response);
+            const embStr = '[' + emb.join(',') + ']';
+            const src = 'escalation://' + esc.id;
+
+            await db.query(
+                `INSERT INTO documents (source_url, title, content, chunk_index, embedding, category, metadata)
+                 VALUES ($1, $2, $3, 0, $4::vector, $5, $6::jsonb)
+                 ON CONFLICT (source_url, chunk_index) DO UPDATE SET 
+                    title = EXCLUDED.title, 
+                    content = EXCLUDED.content,
+                    embedding = EXCLUDED.embedding, 
+                    category = EXCLUDED.category, 
+                    metadata = EXCLUDED.metadata, 
+                    indexed_at = NOW()`,
+                [src, kbTitle, admin_response, embStr, kbCategory, JSON.stringify({ escalation_id: esc.id })]
+            );
+        }
+
+        if (admin_response && esc.chat_id) {
             await db.query(
                 `INSERT INTO messages (chat_id, role, content) VALUES ($1, 'system', $2)`,
                 [esc.chat_id, 'Staff response: ' + admin_response]
             );
         }
+
         res.json(result.rows[0]);
     } catch (err) {
         next(err);

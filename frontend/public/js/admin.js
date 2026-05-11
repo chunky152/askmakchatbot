@@ -331,15 +331,18 @@
         html += '<option value="' + s + '"' + sel + '>' + (s || 'All statuses') + '</option>';
       });
       html += '</select></div><div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900"><table class="min-w-full text-sm"><thead><tr class="border-b border-gray-200 dark:border-gray-800 text-left text-gray-500">';
-      html += '<th class="p-3">Date</th><th class="p-3">User</th><th class="p-3">Preview</th><th class="p-3">Status</th><th class="p-3"></th></tr></thead><tbody>';
+      html += '<th class="p-3">Date</th><th class="p-3">User</th><th class="p-3">Category</th><th class="p-3">Title / Preview</th><th class="p-3">Status</th><th class="p-3"></th></tr></thead><tbody>';
       rows.forEach(function(e) {
-        var who = e.user_name || (e.user_email ? e.user_email : 'Guest');
+        var who = e.user_email || e.user_name || 'Guest';
+        var category = e.category || 'Chat';
+        var titleOrPreview = e.title || Utils.truncate(e.message_content || '', 60);
         html += '<tr class="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">';
-        html += '<td class="p-3 whitespace-nowrap">' + Utils.formatTime(e.created_at) + '</td>';
-        html += '<td class="p-3">' + Utils.escapeHtml(who) + '</td>';
-        html += '<td class="p-3 max-w-xs truncate">' + Utils.escapeHtml(Utils.truncate(e.message_content || '', 60)) + '</td>';
-        html += '<td class="p-3"><span class="text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800">' + e.status + '</span></td>';
-        html += '<td class="p-3"><button type="button" class="text-mak-green text-xs font-medium admin-esc-open" data-id="' + e.id + '">View</button></td></tr>';
+        html += '<td class="p-3 whitespace-nowrap text-xs">' + Utils.formatTime(e.created_at) + '</td>';
+        html += '<td class="p-3 text-xs">' + Utils.escapeHtml(who) + '</td>';
+        html += '<td class="p-3 text-xs"><span class="px-2 py-0.5 rounded-full bg-mak-green/10 text-mak-green text-[10px] font-semibold uppercase">' + Utils.escapeHtml(category) + '</span></td>';
+        html += '<td class="p-3 max-w-xs truncate text-xs" title="' + Utils.escapeHtml(titleOrPreview) + '">' + Utils.escapeHtml(titleOrPreview) + '</td>';
+        html += '<td class="p-3"><span class="text-[10px] px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-800 uppercase font-bold">' + e.status + '</span></td>';
+        html += '<td class="p-3 text-right"><button type="button" class="text-mak-green text-xs font-semibold admin-esc-open" data-id="' + e.id + '">View</button></td></tr>';
       });
       html += '</tbody></table></div>';
       if (!rows.length) html = '<p class="text-gray-500">No escalations</p>';
@@ -357,19 +360,29 @@
     adminFetch('/escalations/' + id).then(function(d) {
       var esc = d.escalation;
       var msgs = d.messages || [];
-      var html = '<p class="mb-2"><strong>Reason:</strong> ' + Utils.escapeHtml(esc.reason || '—') + '</p>';
-      html += '<div class="space-y-2 max-h-[60vh] overflow-y-auto thin-scroll">';
-      msgs.forEach(function(m) {
-        var hl = m.id === esc.message_id ? ' ring-2 ring-mak-red' : '';
-        html += '<div class="rounded-lg p-2 bg-gray-50 dark:bg-gray-800' + hl + '"><span class="text-xs uppercase text-gray-500">' + m.role + '</span>';
-        html += '<div class="text-sm">' + (m.role === 'assistant' ? Utils.renderMarkdown(m.content || '') : Utils.escapeHtml(m.content || '')) + '</div></div>';
-      });
-      html += '</div><div class="mt-4 space-y-2 border-t border-gray-200 dark:border-gray-700 pt-4">';
-      html += '<textarea id="esc-admin-note" rows="2" class="w-full border rounded-lg p-2 text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700" placeholder="Admin response to user…"></textarea>';
+      var html = '<div class="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 space-y-1">';
+      if (esc.user_email) html += '<p class="text-xs"><strong>User Email:</strong> ' + Utils.escapeHtml(esc.user_email) + '</p>';
+      if (esc.category) html += '<p class="text-xs"><strong>Category:</strong> ' + Utils.escapeHtml(esc.category) + '</p>';
+      if (esc.title) html += '<p class="text-xs"><strong>Inquiry Title:</strong> ' + Utils.escapeHtml(esc.title) + '</p>';
+      html += '<p class="text-xs"><strong>Reason:</strong> ' + Utils.escapeHtml(esc.reason || '—') + '</p>';
+      html += '</div>';
+
+      if (msgs.length) {
+        html += '<div class="space-y-2 max-h-[40vh] overflow-y-auto thin-scroll mb-4">';
+        msgs.forEach(function(m) {
+          var hl = m.id === esc.message_id ? ' ring-2 ring-mak-red/50' : '';
+          html += '<div class="rounded-lg p-2 bg-gray-50 dark:bg-gray-950' + hl + '"><span class="text-[10px] uppercase font-bold text-gray-500">' + m.role + '</span>';
+          html += '<div class="text-xs leading-relaxed">' + (m.role === 'assistant' ? Utils.renderMarkdown(m.content || '') : Utils.escapeHtml(m.content || '')) + '</div></div>';
+        });
+        html += '</div>';
+      }
+
+      html += '<div class="mt-4 space-y-3 border-t border-gray-200 dark:border-gray-700 pt-4">';
+      html += '<textarea id="esc-admin-note" rows="4" class="w-full border rounded-lg p-3 text-sm bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 focus:ring-2 focus:ring-mak-green/20 focus:border-mak-green outline-none transition" placeholder="Write the answer here... This will be emailed to the user and published to the Knowledge Base."></textarea>';
       html += '<div class="flex flex-wrap gap-2">';
-      html += '<button type="button" class="admin-esc-patch px-3 py-2 rounded-lg bg-mak-green text-white text-sm" data-id="' + id + '" data-status="resolved">Resolve with response</button>';
-      html += '<button type="button" class="admin-esc-patch px-3 py-2 rounded-lg border text-sm" data-id="' + id + '" data-status="in_progress">In progress</button>';
-      html += '<button type="button" class="admin-esc-patch px-3 py-2 rounded-lg border text-sm" data-id="' + id + '" data-status="dismissed">Dismiss</button>';
+      html += '<button type="button" class="admin-esc-patch px-4 py-2.5 rounded-lg bg-mak-green text-white text-sm font-semibold shadow-sm hover:opacity-90 transition" data-id="' + id + '" data-status="resolved">Resolve & Publish</button>';
+      html += '<button type="button" class="admin-esc-patch px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm font-medium hover:bg-gray-50 transition" data-id="' + id + '" data-status="in_progress">Mark In Progress</button>';
+      html += '<button type="button" class="admin-esc-patch px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm font-medium hover:bg-red-50 hover:text-red-600 transition" data-id="' + id + '" data-status="dismissed">Dismiss</button>';
       html += '</div></div>';
       openModal('Escalation', html);
       document.querySelectorAll('.admin-esc-patch').forEach(function(b) {

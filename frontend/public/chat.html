@@ -191,6 +191,7 @@
       <div id="welcome-screen" class="welcome-screen-block relative z-[1] shrink-0 flex flex-col items-center justify-center text-center px-4 sm:px-5 py-6 sm:py-10 animate-fade-in max-w-md mx-auto w-full">
         <div class="w-full shrink-0 px-0.5">
         <h2 id="welcome-greeting" class="text-[1.0625rem] sm:text-xl font-semibold text-zinc-800 dark:text-zinc-50 mb-1 leading-snug px-1">Hi, I&apos;m AskMak</h2>
+        <div id="kb-categories" class="flex flex-wrap items-center justify-center gap-2 mt-4 mb-2"></div>
         <p id="welcome-lead" class="text-[0.9375rem] sm:text-base font-medium text-zinc-700 dark:text-zinc-200 mb-1 leading-snug px-1">How can I help you today?</p>
         <p class="text-[0.8125rem] sm:text-sm text-zinc-500 dark:text-zinc-400 mb-0 sm:mb-5 leading-relaxed px-1 max-w-[22rem] mx-auto">Courses, admissions, fees, campus services—and student life at Makerere.</p>
         </div>
@@ -281,6 +282,16 @@
       <div id="memories-list" class="space-y-2">
         <div class="text-sm text-gray-400 dark:text-zinc-500 text-center py-6">No memories yet</div>
       </div>
+    </div>
+  </div>
+<div id="kb-modal" class="hidden fixed inset-0 bg-black/50 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-5 pb-[env(safe-area-inset-bottom,0px)] sm:pb-[env(safe-area-inset-bottom,0px)]">
+  <div class="bg-white dark:bg-chat-raised rounded-t-2xl sm:rounded-xl w-full max-w-lg shadow-xl animate-modal-in border border-gray-200 dark:border-chat-line max-h-[min(85dvh,calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom)))] overflow-y-auto thin-scroll mx-0 sm:mx-auto">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-chat-line">
+      <h3 id="kb-modal-title" class="text-base font-semibold dark:text-zinc-100">Knowledge Base</h3>
+      <button class="modal-close w-8 h-8 rounded-lg hover:bg-gray-100 dark:hover:bg-mak-green/10 flex items-center justify-center text-gray-400 bg-transparent border-none cursor-pointer transition text-lg">&times;</button>
+    </div>
+    <div id="kb-modal-body" class="p-5">
+      <!-- Titles or Form will be injected here -->
     </div>
   </div>
 </div>

@@ -4,7 +4,20 @@ const { optionalAuth, requireAuth, requireAdmin } = require('../middleware/auth'
 
 router.post('/', optionalAuth, async (req, res, next) => {
     try {
-        const { chat_id, message_id, reason } = req.body;
+        const { chat_id, message_id, reason, user_email, category, title } = req.body;
+        
+        if (!chat_id && !message_id) {
+            if (!user_email || !category || !title) {
+                return res.status(400).json({ error: 'user_email, category, and title required for formal tickets' });
+            }
+            const result = await db.query(
+                `INSERT INTO escalations (user_email, category, title, reason)
+                 VALUES ($1, $2, $3, $4) RETURNING *`,
+                [user_email, category, title, reason || 'Knowledge base query escalation']
+            );
+            return res.status(201).json(result.rows[0]);
+        }
+
         if (!chat_id || !message_id) {
             return res.status(400).json({ error: 'chat_id and message_id required' });
         }

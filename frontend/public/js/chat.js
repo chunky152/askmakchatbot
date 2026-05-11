@@ -209,6 +209,7 @@ var Chat = {
     if (leadEl) leadEl.textContent = 'How can I help you today?';
     this.updateAccountChrome();
     this.switchToWelcome();
+    this.loadKBCategories();
   },
 
   newChat: function() {
@@ -529,6 +530,178 @@ var Chat = {
       });
     } catch (e) {
       list.innerHTML = '<div class="text-sm text-zinc-500 text-center py-6">Failed to load memories</div>';
+    }
+  },
+
+  loadKBCategories: async function() {
+    var container = document.getElementById('kb-categories');
+    if (!container) return;
+    try {
+      var result = await API.get('/kb/categories');
+      var categories = result.categories || [];
+      if (!categories.length) {
+        container.innerHTML = '';
+        return;
+      }
+      var html = '';
+      var self = this;
+      categories.forEach(function(cat) {
+        html += '<button class="kb-cat-btn px-4 py-2 bg-zinc-100 dark:bg-chat-raised hover:bg-mak-green/10 dark:hover:bg-mak-green/20 border border-zinc-200 dark:border-chat-line rounded-xl text-xs font-semibold text-zinc-700 dark:text-zinc-200 transition cursor-pointer" data-category="' + Utils.escapeHtml(cat) + '">';
+        html += Utils.escapeHtml(cat);
+        html += '</button>';
+      });
+      container.innerHTML = html;
+
+      container.querySelectorAll('.kb-cat-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          self.showKBTitles(btn.dataset.category);
+        });
+      });
+    } catch (e) {
+      container.innerHTML = '';
+    }
+  },
+
+  showKBTitles: async function(category) {
+    var modal = document.getElementById('kb-modal');
+    var titleEl = document.getElementById('kb-modal-title');
+    var bodyEl = document.getElementById('kb-modal-body');
+    
+    titleEl.textContent = category;
+    bodyEl.innerHTML = '<div class="flex items-center justify-center py-10"><span class="loading-spinner"></span></div>';
+    modal.classList.remove('hidden');
+
+    try {
+      var result = await API.get('/kb/categories/' + encodeURIComponent(category) + '/titles');
+      var titles = result.titles || [];
+      
+      var html = '<div class="space-y-2">';
+      var self = this;
+      titles.forEach(function(item) {
+        html += '<button class="kb-title-btn w-full text-left px-4 py-3 bg-zinc-50 dark:bg-chat-canvas hover:bg-zinc-100 dark:hover:bg-mak-green/5 border border-zinc-200 dark:border-chat-line rounded-lg text-sm text-zinc-700 dark:text-zinc-200 transition cursor-pointer" data-id="' + item.id + '">';
+        html += Utils.escapeHtml(item.title);
+        html += '</button>';
+      });
+      
+      html += '<div class="pt-4 border-t border-zinc-100 dark:border-chat-line mt-4">';
+      html += '<p class="text-xs text-zinc-500 dark:text-zinc-400 mb-3 text-center">Didn\'t find what you were looking for?</p>';
+      html += '<button id="kb-ticket-trigger" class="w-full py-2.5 bg-mak-green text-white rounded-lg text-sm font-semibold hover:opacity-90 transition cursor-pointer">File a Formal Ticket</button>';
+      html += '</div>';
+      html += '</div>';
+      
+      bodyEl.innerHTML = html;
+
+      bodyEl.querySelectorAll('.kb-title-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          self.showKBContent(btn.dataset.id);
+        });
+      });
+
+      document.getElementById('kb-ticket-trigger').addEventListener('click', function() {
+        self.showTicketForm(category);
+      });
+
+    } catch (e) {
+      bodyEl.innerHTML = '<p class="text-sm text-mak-red">Failed to load titles.</p>';
+    }
+  },
+
+  showKBContent: async function(id) {
+    var bodyEl = document.getElementById('kb-modal-body');
+    bodyEl.innerHTML = '<div class="flex items-center justify-center py-10"><span class="loading-spinner"></span></div>';
+
+    try {
+      var result = await API.get('/kb/documents/' + id);
+      var doc = result.document;
+      
+      var html = '<div class="prose prose-sm dark:prose-invert max-w-none">';
+      html += '<h4 class="text-mak-green dark:text-white mb-2">' + Utils.escapeHtml(doc.title) + '</h4>';
+      html += '<div class="text-zinc-700 dark:text-zinc-300 leading-relaxed">' + Utils.renderMarkdown(doc.content) + '</div>';
+      html += '<div class="mt-8 pt-4 border-t border-zinc-100 dark:border-chat-line flex flex-col gap-3">';
+      html += '<button id="kb-back-titles" class="text-sm text-zinc-500 dark:text-zinc-400 hover:text-mak-green transition bg-transparent border-none cursor-pointer">← Back to ' + Utils.escapeHtml(doc.category) + '</button>';
+      html += '<button id="kb-ticket-trigger-inner" class="w-full py-2.5 bg-zinc-100 dark:bg-mak-green/20 text-zinc-700 dark:text-mak-green rounded-lg text-sm font-semibold hover:bg-zinc-200 dark:hover:bg-mak-green/30 transition cursor-pointer">Not what I needed - File a Formal Ticket</button>';
+      html += '</div>';
+      html += '</div>';
+      
+      bodyEl.innerHTML = html;
+
+      var self = this;
+      document.getElementById('kb-back-titles').addEventListener('click', function() {
+        self.showKBTitles(doc.category);
+      });
+      document.getElementById('kb-ticket-trigger-inner').addEventListener('click', function() {
+        self.showTicketForm(doc.category, doc.title);
+      });
+
+    } catch (e) {
+      bodyEl.innerHTML = '<p class="text-sm text-mak-red">Failed to load content.</p>';
+    }
+  },
+
+  showTicketForm: function(category, titleHint) {
+    var titleEl = document.getElementById('kb-modal-title');
+    var bodyEl = document.getElementById('kb-modal-body');
+    
+    titleEl.textContent = 'File a Formal Ticket';
+    
+    var email = Auth.user ? Auth.user.email : '';
+    
+    var html = '<form id="kb-ticket-form" class="space-y-4">';
+    html += '<div><label class="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-1">Email</label>';
+    html += '<input type="email" id="ticket-email" value="' + Utils.escapeHtml(email) + '" required placeholder="Enter your email" class="w-full bg-zinc-50 dark:bg-chat-canvas border border-zinc-200 dark:border-chat-line rounded-lg px-3 py-2 text-sm focus:border-mak-green outline-none dark:text-white transition"></div>';
+    
+    html += '<div><label class="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-1">Category</label>';
+    html += '<input type="text" id="ticket-category" value="' + Utils.escapeHtml(category) + '" readonly class="w-full bg-zinc-100 dark:bg-chat-sidebar/50 border border-zinc-200 dark:border-chat-line rounded-lg px-3 py-2 text-sm text-zinc-500 cursor-not-allowed"></div>';
+    
+    html += '<div><label class="block text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase mb-1">Inquiry Title</label>';
+    html += '<input type="text" id="ticket-title" value="' + Utils.escapeHtml(titleHint || '') + '" required placeholder="What is your question about?" class="w-full bg-zinc-50 dark:bg-chat-canvas border border-zinc-200 dark:border-chat-line rounded-lg px-3 py-2 text-sm focus:border-mak-green outline-none dark:text-white transition"></div>';
+    
+    html += '<p class="text-[11px] text-zinc-500 dark:text-zinc-400 italic">This ticket will be sent to Makerere staff. You will receive an email once it is resolved and added to our Knowledge Base.</p>';
+    
+    html += '<div class="pt-2 flex gap-3">';
+    html += '<button type="button" id="kb-ticket-cancel" class="flex-1 py-2.5 bg-zinc-100 dark:bg-chat-raised text-zinc-600 dark:text-zinc-300 rounded-lg text-sm font-semibold hover:bg-zinc-200 transition cursor-pointer">Cancel</button>';
+    html += '<button type="submit" class="flex-1 py-2.5 bg-mak-green text-white rounded-lg text-sm font-semibold hover:opacity-90 transition cursor-pointer">Send Ticket</button>';
+    html += '</div></form>';
+    
+    bodyEl.innerHTML = html;
+
+    var self = this;
+    document.getElementById('kb-ticket-cancel').addEventListener('click', function() {
+      self.showKBTitles(category);
+    });
+
+    document.getElementById('kb-ticket-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      self.submitTicket();
+    });
+  },
+
+  submitTicket: async function() {
+    var email = document.getElementById('ticket-email').value;
+    var category = document.getElementById('ticket-category').value;
+    var title = document.getElementById('ticket-title').value;
+    
+    var bodyEl = document.getElementById('kb-modal-body');
+    var originalHtml = bodyEl.innerHTML;
+    bodyEl.innerHTML = '<div class="flex items-center justify-center py-10"><span class="loading-spinner"></span></div>';
+
+    try {
+      await API.post('/escalations', {
+        user_email: email,
+        category: category,
+        title: title,
+        reason: 'Knowledge Base lookup failure'
+      });
+      
+      bodyEl.innerHTML = '<div class="text-center py-10"><div class="w-16 h-16 bg-mak-green/10 text-mak-green rounded-full flex items-center justify-center mx-auto mb-4"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3 class="text-lg font-bold dark:text-white mb-2">Ticket Sent</h3><p class="text-sm text-zinc-500 dark:text-zinc-400">Our staff will review your inquiry and get back to you via email.</p><button id="kb-done" class="mt-6 px-8 py-2 bg-mak-green text-white rounded-lg font-semibold hover:opacity-90 transition cursor-pointer">Done</button></div>';
+      
+      document.getElementById('kb-done').addEventListener('click', function() {
+        document.getElementById('kb-modal').classList.add('hidden');
+      });
+
+    } catch (e) {
+      Utils.showToast('Failed to send ticket', 'error');
+      bodyEl.innerHTML = originalHtml;
     }
   }
 };
