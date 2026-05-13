@@ -9,6 +9,20 @@ var Chat = {
   /** Mobile (<lg): fixed #chat-top-bar needs matching top padding on #chat-body */
   mqMobileChat: typeof window.matchMedia !== 'undefined' ? window.matchMedia('(max-width: 1023px)') : null,
 
+  /** Keep fixed top bar aligned with the visual viewport when mobile browsers shift layout (e.g. keyboard). */
+  syncMobileTopBarVisualPosition: function() {
+    var bar = document.getElementById('chat-top-bar');
+    if (!bar) return;
+    if (!Chat.mqMobileChat || !Chat.mqMobileChat.matches) {
+      bar.style.transform = '';
+      return;
+    }
+    var vv = window.visualViewport;
+    if (!vv) return;
+    var y = vv.offsetTop;
+    bar.style.transform = y ? 'translate3d(0,' + y + 'px,0)' : '';
+  },
+
   syncMobileHeaderInset: function() {
     var bar = document.getElementById('chat-top-bar');
     var bodyEl = document.getElementById('chat-body');
@@ -20,11 +34,16 @@ var Chat = {
     bodyEl.style.paddingTop = bar.offsetHeight + 'px';
   },
 
+  applyMobileChatChrome: function() {
+    Chat.syncMobileHeaderInset();
+    Chat.syncMobileTopBarVisualPosition();
+  },
+
   bindMobileHeaderInsetSync: function() {
     var bar = document.getElementById('chat-top-bar');
     if (!bar || typeof window.ResizeObserver === 'undefined') return;
     var ro = new ResizeObserver(function() {
-      Chat.syncMobileHeaderInset();
+      Chat.applyMobileChatChrome();
     });
     ro.observe(bar);
   },
@@ -51,6 +70,10 @@ var Chat = {
       Sidebar.init();
       self.renderWelcome();
       Upload.init();
+      // Explicitly show the KB section if the user is logged in
+      if (Auth.isAuthenticated() && window.KB && KB.show) {
+        KB.show(Auth.user);
+      }
     });
 
     var input = document.getElementById('message-input');
@@ -139,31 +162,33 @@ var Chat = {
 
     window.addEventListener('online', function() {
       document.getElementById('offline-banner').classList.add('hidden');
-      self.syncMobileHeaderInset();
+      self.applyMobileChatChrome();
     });
     window.addEventListener('offline', function() {
       document.getElementById('offline-banner').classList.remove('hidden');
-      self.syncMobileHeaderInset();
+      self.applyMobileChatChrome();
     });
 
     self.bindMobileHeaderInsetSync();
-    self.syncMobileHeaderInset();
+    self.applyMobileChatChrome();
     window.addEventListener('resize', function() {
-      self.syncMobileHeaderInset();
+      self.applyMobileChatChrome();
     });
     window.addEventListener('orientationchange', function() {
       setTimeout(function() {
-        self.syncMobileHeaderInset();
+        self.applyMobileChatChrome();
       }, 250);
     });
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', function() {
-        self.syncMobileHeaderInset();
-      });
+      var onVV = function() {
+        self.applyMobileChatChrome();
+      };
+      window.visualViewport.addEventListener('resize', onVV);
+      window.visualViewport.addEventListener('scroll', onVV);
     }
     if (Chat.mqMobileChat && typeof Chat.mqMobileChat.addEventListener === 'function') {
       Chat.mqMobileChat.addEventListener('change', function() {
-        self.syncMobileHeaderInset();
+        self.applyMobileChatChrome();
       });
     }
   },
@@ -271,22 +296,37 @@ var Chat = {
     this.isStreaming = true;
     this.showTyping(true);
 
+    var botContent = '';
+    var botDiv = null;
+
     try {
       this.controller = new AbortController();
       var self = this;
-      var botContent = '';
-      var botDiv = null;
       var signedIn = Auth.isAuthenticated();
+
+      function stripStreamingCaret() {
+        if (!botDiv) return;
+        botDiv.classList.remove('msg-row-streaming');
+        var bubble = botDiv.querySelector('.msg-content');
+        if (bubble && bubble.querySelector('.msg-stream-caret')) {
+          bubble.innerHTML = Utils.renderMarkdown(botContent);
+        }
+      }
 
       function onStreamData(data) {
         if (data.type === 'token' || data.type === 'delta') {
           botContent += data.content || data.delta || '';
+          var caret = '<span class="msg-stream-caret" aria-hidden="true"></span>';
           if (!botDiv) {
             self.showTyping(false);
-            botDiv = self.appendMessage({ role: 'assistant', content: botContent, created_at: new Date().toISOString() });
+            botDiv = self.appendMessage(
+              { role: 'assistant', content: botContent, created_at: new Date().toISOString() },
+              true,
+              { streaming: true }
+            );
           } else {
             var bubble = botDiv.querySelector('.msg-content');
-            if (bubble) bubble.innerHTML = Utils.renderMarkdown(botContent);
+            if (bubble) bubble.innerHTML = Utils.renderMarkdown(botContent) + caret;
           }
           var msgs = document.getElementById('chat-messages');
           msgs.scrollTop = msgs.scrollHeight;
@@ -302,6 +342,7 @@ var Chat = {
 
         if (data.type === 'done') {
           if (botDiv) {
+            stripStreamingCaret();
             var actionsHtml = self.renderActions(data.message_id);
             var wrapper = botDiv.querySelector('.msg-meta');
             if (wrapper) wrapper.insertAdjacentHTML('beforeend', actionsHtml);
@@ -315,6 +356,7 @@ var Chat = {
 
         if (data.type === 'error') {
           self.showTyping(false);
+          stripStreamingCaret();
           Utils.showToast(
             data.message || 'Hmm, I didn\'t get that. Try asking about courses or fees.',
             'error'
@@ -351,15 +393,34 @@ var Chat = {
       this.isStreaming = false;
       this.showTyping(false);
       this.controller = null;
+      if (botDiv) {
+        botDiv.classList.remove('msg-row-streaming');
+        var bubbleFin = botDiv.querySelector('.msg-content');
+        if (bubbleFin && bubbleFin.querySelector('.msg-stream-caret')) {
+          bubbleFin.innerHTML = Utils.renderMarkdown(botContent);
+        }
+      }
     }
   },
 
-  appendMessage: function(msg, scroll) {
+  appendMessage: function(msg, scroll, opts) {
+    opts = opts || {};
     var msgs = document.getElementById('chat-messages');
     var div = document.createElement('div');
     var isUser = msg.role === 'user';
 
-    div.className = 'flex gap-2 max-w-3xl w-full mx-auto py-2 sm:py-3 lg:gap-3 animate-fade-in' + (isUser ? ' flex-row-reverse' : '');
+    var entranceClass = '';
+    if (scroll !== false) {
+      if (isUser) entranceClass = ' animate-msg-user-in';
+      else if (opts.streaming) entranceClass = ' animate-assistant-in';
+      else entranceClass = ' animate-fade-in';
+    }
+
+    div.className =
+      'flex gap-2 max-w-3xl w-full mx-auto py-2 sm:py-3 lg:gap-3 motion-reduce:animate-none' +
+      entranceClass +
+      (isUser ? ' flex-row-reverse' : '') +
+      (!isUser && opts.streaming ? ' msg-row-streaming' : '');
     if (msg.id) div.dataset.msgId = msg.id;
 
     var avatarBg = isUser
@@ -384,6 +445,7 @@ var Chat = {
       html +=
         '<div class="msg-content rounded-2xl rounded-tl-sm border-0 shadow-none bg-transparent dark:bg-transparent px-0 sm:px-0.5 py-1.5 sm:py-1.5 text-[0.9375rem] sm:text-sm break-words max-w-[min(94%,32rem)] sm:max-w-[90%] text-zinc-800 dark:text-zinc-100 prose prose-sm prose-zinc dark:prose-invert max-w-none prose-strong:text-zinc-900 dark:prose-strong:text-white prose-pre:overflow-x-auto prose-table:overflow-x-auto prose-table:block prose-table:max-w-full prose-img:rounded-lg prose-serif prose-a:text-mak-green dark:prose-a:text-mak-green prose-headings:font-semibold prose-headings:text-mak-green dark:prose-headings:text-zinc-50 dark:prose-code:text-mak-green/95 dark:prose-pre:bg-chat-sidebar/80 dark:prose-pre:text-zinc-200">';
       html += Utils.renderMarkdown(msg.content || '');
+      if (opts.streaming) html += '<span class="msg-stream-caret" aria-hidden="true"></span>';
       html += '</div>';
     }
 

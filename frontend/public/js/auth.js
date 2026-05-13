@@ -10,6 +10,10 @@ var Auth = {
       this.user = null;
     }
     this.setupForms();
+    // Notify other modules that auth state is known
+    window.dispatchEvent(new CustomEvent('auth:ready', {
+      detail: { isAuthenticated: this.isAuthenticated(), user: this.user }
+    }));
   },
 
   setupForms: function() {
@@ -20,6 +24,22 @@ var Auth = {
       loginForm.addEventListener('submit', function(e) {
         e.preventDefault();
         self.handleLogin(loginForm);
+      });
+    }
+
+    var forgotForm = document.getElementById('forgot-password-form');
+    if (forgotForm) {
+      forgotForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        self.handleForgotPassword(forgotForm);
+      });
+    }
+
+    var resetForm = document.getElementById('reset-password-form');
+    if (resetForm) {
+      resetForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        self.handleResetPassword(resetForm);
       });
     }
 
@@ -134,6 +154,80 @@ var Auth = {
       return;
     }
     window.location.href = safeNext || '/chat.html';
+  },
+
+  handleForgotPassword: async function(form) {
+    var btn = form.querySelector('button[type="submit"]');
+    var originalText = btn.textContent;
+    var email = form.querySelector('[name="email"]').value.trim();
+    var nextEl = form.querySelector('[name="next"]');
+    var nextVal = nextEl && nextEl.value ? nextEl.value.trim() : '';
+
+    try {
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+
+      var payload = { email: email };
+      if (nextVal && nextVal.charAt(0) === '/' && nextVal.charAt(1) !== '/') {
+        payload.next = nextVal;
+      }
+
+      var result = await API.post('/auth/forgot-password', payload);
+      this.showAlert(result.message || 'Check your email for a reset link.', 'success');
+      form.reset();
+      if (nextEl) nextEl.value = nextVal;
+    } catch (e) {
+      this.showAlert(e.message || 'Could not send reset email.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  },
+
+  handleResetPassword: async function(form) {
+    var btn = form.querySelector('button[type="submit"]');
+    var originalText = btn.textContent;
+    var token = form.querySelector('[name="token"]').value;
+    var pw = form.querySelector('[name="password"]').value;
+    var confirm = form.querySelector('[name="confirm_password"]').value;
+
+    if (!token) {
+      this.showAlert('Invalid reset link.', 'error');
+      return;
+    }
+
+    if (pw.length < 8) {
+      this.showAlert('Password must be at least 8 characters', 'error');
+      return;
+    }
+
+    if (pw !== confirm) {
+      this.showAlert('Passwords do not match', 'error');
+      return;
+    }
+
+    try {
+      btn.disabled = true;
+      btn.textContent = 'Updating…';
+
+      await API.post('/auth/reset-password', { token: token, password: pw });
+
+      var params = new URLSearchParams(window.location.search);
+      var next = params.get('next');
+      var safeNext = next && next.charAt(0) === '/' && next.charAt(1) !== '/' ? next : null;
+      var loginHref = '/login.html';
+      if (safeNext) loginHref += '?next=' + encodeURIComponent(safeNext);
+
+      this.showAlert('Password updated. Redirecting to sign in…', 'success');
+      setTimeout(function() {
+        window.location.href = loginHref;
+      }, 1500);
+    } catch (e) {
+      this.showAlert(e.message || 'Reset failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
   },
 
   handleLogin: async function(form) {

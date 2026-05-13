@@ -78,6 +78,10 @@ scp .env dockeruser@YOUR_VPS_IP:~/askmakchatbot/.env
 
 Prefer editing on the VPS so production keeps its own JWT/DB values and you only paste the SMTP lines.
 
+**Password reset:** forgot-password emails use the same SMTP. For databases created **before** the reset-link feature shipped, run the migration once (repo root):  
+`docker compose -f docker-compose.dockeruser.yml run --rm app npm run db:apply-password-reset`  
+(or execute `backend/db/password_reset_columns.sql` manually against Postgres).
+
 ### 5. First full stack start
 
 ```bash

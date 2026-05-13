@@ -17,13 +17,23 @@ var Sidebar = {
 
     document.getElementById('sidebar-toggle').addEventListener('click', function() { self.toggle(); });
     document.getElementById('sidebar-overlay').addEventListener('click', function() { self.close(); });
-    document.getElementById('new-chat-btn').addEventListener('click', function() { Chat.newChat(); });
+    document.getElementById('new-chat-btn').addEventListener('click', function() {
+      Chat.newChat();
+      self.close();
+    });
     document.getElementById('clear-history-btn').addEventListener('click', function() { self.clearAllHistory(); });
 
     var signInBtn = document.getElementById('sidebar-sign-in');
     if (signInBtn) {
       signInBtn.addEventListener('click', function() {
         window.location.href = '/login.html?next=%2Fchat.html';
+      });
+    }
+
+    var qaBlock = document.querySelector('#sidebar .sidebar-quick-block');
+    if (qaBlock) {
+      qaBlock.querySelectorAll('a.sidebar-nav-btn[href]').forEach(function(link) {
+        link.addEventListener('click', function() { self.close(); });
       });
     }
 
@@ -184,6 +194,7 @@ var Sidebar = {
     if (!Auth.isAuthenticated()) {
       Chat.guestTurns = [];
       Chat.newChat();
+      this.close();
       Utils.showToast('Conversation cleared (guest session)', 'success');
       return;
     }
@@ -202,6 +213,7 @@ var Sidebar = {
       this.chats = [];
       this.activeId = null;
       Chat.newChat();
+      this.close();
       Utils.showToast('Chat history cleared', 'success');
     } catch (e) {
       Utils.showToast((e && e.message) || 'Failed to clear history', 'error');
@@ -307,9 +319,9 @@ var Sidebar = {
 
   select: function(id) {
     this.activeId = id;
+    this.close();
     this.render();
     Chat.loadChat(id);
-    this.close();
   },
 
   openMenu: function(btn, chatId) {

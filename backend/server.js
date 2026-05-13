@@ -76,6 +76,79 @@ async function waitForDatabase() {
     console.warn('Continuing without database (non-production).');
 }
 
+/** Forgot-password flow needs these columns; older DBs may lack them until migrated. */
+async function ensurePasswordResetSchema() {
+    if (process.env.SKIP_PASSWORD_RESET_SCHEMA === '1' || process.env.SKIP_PASSWORD_RESET_SCHEMA === 'true') {
+        return;
+    }
+    try {
+        await db.query(
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64)'
+        );
+        await db.query(
+            'ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ'
+        );
+        await db.query(
+            'CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token_hash) WHERE password_reset_token_hash IS NOT NULL'
+        );
+    } catch (err) {
+        console.warn('[AskMak] Could not ensure password reset columns:', err.message);
+    }
+}
+
+/** Knowledge Base + tickets tables (present in schema.sql; older/production DBs may lack them until migrated). */
+async function ensureKbTables() {
+    if (process.env.SKIP_KB_SCHEMA === '1' || process.env.SKIP_KB_SCHEMA === 'true') {
+        return;
+    }
+    try {
+        await db.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+    } catch (err) {
+        /* Insufficient privileges is fine if extension already exists from main schema. */
+    }
+    try {
+        await db.query(`
+CREATE TABLE IF NOT EXISTS kb_entries (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category     VARCHAR(100)  NOT NULL,
+    title        VARCHAR(512)  NOT NULL,
+    content      TEXT          NOT NULL,
+    is_published BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+)`);
+        await db.query(
+            'CREATE INDEX IF NOT EXISTS idx_kb_entries_category  ON kb_entries(category)'
+        );
+        await db.query(
+            'CREATE INDEX IF NOT EXISTS idx_kb_entries_published ON kb_entries(is_published, category)'
+        );
+        await db.query(`
+CREATE TABLE IF NOT EXISTS kb_tickets (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category       VARCHAR(100)  NOT NULL,
+    title          VARCHAR(512)  NOT NULL,
+    content        TEXT,
+    student_email  VARCHAR(255)  NOT NULL,
+    student_name   VARCHAR(255),
+    status         VARCHAR(20)   NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'resolved')),
+    admin_response TEXT,
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    resolved_at    TIMESTAMPTZ,
+    notified_at    TIMESTAMPTZ
+)`);
+        await db.query(
+            'CREATE INDEX IF NOT EXISTS idx_kb_tickets_status ON kb_tickets(status)'
+        );
+        await db.query(
+            'CREATE INDEX IF NOT EXISTS idx_kb_tickets_email  ON kb_tickets(student_email)'
+        );
+    } catch (err) {
+        console.warn('[AskMak] Could not ensure KB tables:', err.message);
+    }
+}
+
 app.use(helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
@@ -120,6 +193,8 @@ app.use(errorHandler);
 
 async function start() {
     await waitForDatabase();
+    await ensurePasswordResetSchema();
+    await ensureKbTables();
 
     cron.start();
 

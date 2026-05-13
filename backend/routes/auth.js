@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
@@ -14,9 +15,40 @@ const signupSchema = Joi.object({
     password: Joi.string().min(8).max(128).required()
 });
 
+const forgotPasswordSchema = Joi.object({
+    email: Joi.string().email().required(),
+    next: Joi.string().max(512).optional().allow('', null)
+});
+
+const resetPasswordSchema = Joi.object({
+    token: Joi.string().trim().min(32).max(200).required(),
+    password: Joi.string().min(8).max(128).required()
+});
+
 function generateCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+function hashResetToken(token) {
+    return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function generateResetToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+/** Absolute origin for links in outbound email (reset, verify). */
+function publicAppUrl(req) {
+    const trimmed = process.env.PUBLIC_APP_URL && String(process.env.PUBLIC_APP_URL).trim();
+    if (trimmed) return trimmed.replace(/\/$/, '');
+    const proto = (req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+    const host = (req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
+    if (!host) return `http://localhost:${process.env.PORT || 3000}`;
+    return `${proto}://${host}`;
+}
+
+const FORGOT_PASSWORD_GENERIC =
+    'If an account exists for that email, we sent a link to reset your password.';
 
 function smtpConfigured() {
     return emailService.smtpConfigured();
@@ -229,6 +261,127 @@ router.post('/login', authLimiter, async (req, res, next) => {
         setAuthCookie(res, token);
 
         res.json({ user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role } });
+    } catch (err) {
+        next(err);
+    }
+});
+
+router.post('/forgot-password', authLimiter, async (req, res, next) => {
+    try {
+        const { error, value } = forgotPasswordSchema.validate(req.body);
+        if (error) return res.status(400).json({ error: error.details[0].message });
+
+        const wantsEmailVerify = smtpConfigured() && !verificationEmailDisabled();
+        const isProduction = process.env.NODE_ENV === 'production';
+
+        const emailInput = value.email.trim();
+        const result = await db.query(
+            'SELECT id, full_name, email FROM users WHERE LOWER(email) = LOWER($1)',
+            [emailInput]
+        );
+
+        if (!result.rows.length) {
+            return res.json({ message: FORGOT_PASSWORD_GENERIC });
+        }
+
+        const user = result.rows[0];
+
+        if (isProduction && !wantsEmailVerify) {
+            return res.status(503).json({
+                error:
+                    'Password reset by email is unavailable: configure SMTP_HOST (and SMTP_FROM) on the server.'
+            });
+        }
+
+        const rawToken = generateResetToken();
+        const tokenHash = hashResetToken(rawToken);
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+        await db.query(
+            `UPDATE users SET password_reset_token_hash = $1, password_reset_expires_at = $2,
+             updated_at = NOW() WHERE id = $3`,
+            [tokenHash, expiresAt, user.id]
+        );
+
+        const origin = publicAppUrl(req);
+        const rawNext = value.next && String(value.next).trim();
+        const safeNext =
+            rawNext && rawNext.charAt(0) === '/' && rawNext.charAt(1) !== '/'
+                ? rawNext
+                : '';
+        const nextQs = safeNext ? `&next=${encodeURIComponent(safeNext)}` : '';
+        const resetUrl = `${origin}/reset-password.html?token=${encodeURIComponent(rawToken)}${nextQs}`;
+
+        const html = `<p>Hi ${user.full_name},</p>
+<p>We received a request to reset your AskMak password.</p>
+<p><a href="${resetUrl}">Reset your password</a></p>
+<p>This link expires in one hour. If you did not ask for this, you can ignore this email.</p>
+<p style="font-size:12px;color:#64748b">If the link does not work, copy and paste this URL into your browser:<br>${resetUrl}</p>`;
+
+        if (wantsEmailVerify) {
+            const sent = await sendVerificationMail(user.email, 'Reset your AskMak password', html);
+            if (!sent) {
+                await db.query(
+                    'UPDATE users SET password_reset_token_hash = NULL, password_reset_expires_at = NULL, updated_at = NOW() WHERE id = $1',
+                    [user.id]
+                );
+                return res.status(503).json({
+                    error: 'Could not send the reset email. Check SMTP settings and try again.'
+                });
+            }
+        } else {
+            console.warn(`[AskMak DEV] Password reset link for ${user.email}: ${resetUrl}`);
+        }
+
+        let message = FORGOT_PASSWORD_GENERIC;
+        if (!wantsEmailVerify) {
+            message +=
+                ' On this server SMTP is off (dev): the reset link was printed in the AskMak server logs.';
+        }
+        if (process.env.SMTP_INBOX_URL && wantsEmailVerify) {
+            message += ' Mailpit/UI: ' + process.env.SMTP_INBOX_URL;
+        }
+
+        res.json({ message });
+    } catch (err) {
+        next(err);
+    }
+});
+
+router.post('/reset-password', authLimiter, async (req, res, next) => {
+    try {
+        const { error, value } = resetPasswordSchema.validate(req.body);
+        if (error) return res.status(400).json({ error: error.details[0].message });
+
+        const tokenHash = hashResetToken(value.token);
+
+        const result = await db.query(
+            `SELECT id FROM users
+             WHERE password_reset_token_hash = $1
+               AND password_reset_expires_at IS NOT NULL
+               AND password_reset_expires_at > NOW()`,
+            [tokenHash]
+        );
+
+        if (!result.rows.length) {
+            return res.status(400).json({
+                error: 'This reset link is invalid or has expired. Request a new one from the sign-in page.'
+            });
+        }
+
+        const userId = result.rows[0].id;
+        const passwordHash = await bcrypt.hash(value.password, 12);
+
+        await db.query(
+            `UPDATE users SET password_hash = $1,
+             password_reset_token_hash = NULL,
+             password_reset_expires_at = NULL,
+             updated_at = NOW()
+             WHERE id = $2`,
+            [passwordHash, userId]
+        );
+
+        res.json({ message: 'Your password has been updated. You can sign in now.' });
     } catch (err) {
         next(err);
     }

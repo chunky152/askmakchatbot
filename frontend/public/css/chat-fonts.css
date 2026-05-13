@@ -1,6 +1,25 @@
-/* Anthropic Serif — used on chat.html only (see /css/styles.css #chat-body) */
-/* Font files via jsDelivr: https://github.com/devchauhann/fonts */
+/*
+ * Chat typography (see styles.css body.chat-app):
+ * — Styrene B: licensed .woff2 under /assets/fonts/styrene-b/ — sidebar, menus, prompt/composer, welcome.
+ * — Anthropic Serif: assistant markdown body text (.msg-content.prose); CDN @font-face below + Georgia/Times fallback.
+ */
+@font-face {
+  font-family: 'Styrene B';
+  src: url('/assets/fonts/styrene-b/StyreneB-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
+@font-face {
+  font-family: 'Styrene B';
+  src: url('/assets/fonts/styrene-b/StyreneB-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Anthropic Serif — assistant prose (weights used by markdown headings/strong) */
 @font-face {
   font-family: 'Anthropic Serif';
   src: url('https://cdn.jsdelivr.net/gh/devchauhann/fonts@main/cdn/v1/fonts/AnthropicSerif@400.woff2') format('woff2');

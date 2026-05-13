@@ -4,8 +4,23 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>AskMak - Makerere University Support</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <meta name="theme-color" content="#00a651">
+  <link rel="icon" href="/favicon.png" type="image/png" sizes="any">
+  <meta name="theme-color" content="#006B3C">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    (function () {
+      try {
+        var k = localStorage.getItem('askmak-theme');
+        var dark =
+          k === 'dark'
+            ? true
+            : k === 'light'
+              ? false
+              : typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', !!dark);
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
   <script src="js/tailwind-config.js"></script>
   <link rel="stylesheet" href="css/styles.css">
@@ -21,15 +36,25 @@
 
   <header class="relative z-10 shrink-0 bg-white/70 dark:bg-gray-950/75 backdrop-blur-md pt-[max(0px,env(safe-area-inset-top,0px))]">
     <div class="max-w-6xl mx-auto w-full pl-[max(1rem,env(safe-area-inset-left,0px))] pr-[max(1rem,env(safe-area-inset-right,0px))] sm:px-6 lg:px-8 min-h-[3.5rem] flex items-center justify-between gap-3 sm:gap-4">
-      <a href="index.html" class="flex items-center gap-2.5 min-w-0">
-        <img src="assets/mak_logo.png" alt="Makerere University" class="h-8 sm:h-9 w-auto shrink-0">
-        <span class="text-lg sm:text-xl font-bold tracking-tight text-mak-dark dark:text-white truncate">Ask<span class="text-mak-green">Mak</span></span>
+      <a href="index.html" class="flex items-center min-w-0 no-underline outline-none hover:opacity-90 transition" title="Askmak home">
+        <img src="assets/askmak%20logo%20lightmode.png" alt="Askmak — Intelligent Campus Assistant" class="h-12 w-auto max-w-[min(100%,380px)] shrink-0 object-contain object-left rounded-none border-0 bg-transparent p-0 shadow-none ring-0 outline-none sm:h-14 dark:hidden" width="340" height="72" decoding="async">
+        <img src="assets/askmak%20logo%20darkmode.png" alt="" aria-hidden="true" class="hidden h-12 w-auto max-w-[min(100%,380px)] shrink-0 object-contain object-left rounded-none border-0 bg-transparent p-0 shadow-none ring-0 outline-none sm:h-14 dark:block" width="340" height="72" decoding="async">
       </a>
-      <nav class="flex items-center gap-4 sm:gap-6 shrink-0">
+      <nav class="flex items-center gap-2 sm:gap-4 shrink-0">
         <a href="login.html" class="inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:text-mak-green dark:hover:text-mak-green transition py-2">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="opacity-70" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>
           Sign in
         </a>
+        <button type="button" id="index-theme-toggle" title="Toggle theme" aria-label="Toggle color theme"
+          class="flex items-center justify-center w-10 h-10 min-w-[2.75rem] min-h-[2.75rem] sm:min-w-[2.5rem] sm:min-h-[2.5rem] rounded-xl border-none cursor-pointer transition touch-manipulation [-webkit-tap-highlight-color:transparent]
+          bg-gray-200/90 hover:bg-gray-200 text-gray-700 dark:bg-gray-800/90 dark:hover:bg-gray-800 dark:text-gray-100">
+          <span class="dark:hidden" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+          </span>
+          <span class="hidden dark:inline" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          </span>
+        </button>
       </nav>
     </div>
   </header>
@@ -82,5 +107,15 @@
   </main>
 
   <script src="js/theme.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var btn = document.getElementById('index-theme-toggle');
+      if (btn && typeof Theme !== 'undefined') {
+        btn.addEventListener('click', function () {
+          Theme.toggle();
+        });
+      }
+    });
+  </script>
 </body>
 </html>

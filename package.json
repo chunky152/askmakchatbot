@@ -11,6 +11,7 @@
     "eval": "node backend/scripts/eval.js",
     "setup": "docker compose up -d && node backend/scripts/apply-admin-schema.js && node backend/scripts/setup-minio.js",
     "db:apply-admin-schema": "node backend/scripts/apply-admin-schema.js",
+    "db:apply-password-reset": "node backend/scripts/apply-password-reset-columns.js",
     "setup-dockeruser": "docker compose -f docker-compose.dockeruser.yml up -d && node backend/scripts/apply-admin-schema.js && node backend/scripts/setup-minio.js",
     "vps:bootstrap": "bash scripts/vps-bootstrap.sh"
   },

@@ -19,7 +19,16 @@ var API = {
 
     if (response.status === 401) {
       var path = window.location.pathname;
-      var publicPages = ['/login.html', '/signup.html', '/', '/index.html', '/verify.html', '/chat.html'];
+      var publicPages = [
+        '/login.html',
+        '/signup.html',
+        '/forgot-password.html',
+        '/reset-password.html',
+        '/',
+        '/index.html',
+        '/verify.html',
+        '/chat.html'
+      ];
       if (publicPages.indexOf(path) === -1) {
         window.location.href = '/login.html';
         throw { status: 401, message: 'Unauthorized' };

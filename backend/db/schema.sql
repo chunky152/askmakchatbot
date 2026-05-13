@@ -105,3 +105,42 @@ DROP TRIGGER IF EXISTS trg_documents_tsv ON documents;
 CREATE TRIGGER trg_documents_tsv
     BEFORE INSERT OR UPDATE ON documents
     FOR EACH ROW EXECUTE FUNCTION documents_tsv_trigger();
+
+-- ─── Rule-based Knowledge Base ─────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS kb_entries (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category     VARCHAR(100)  NOT NULL,
+    title        VARCHAR(512)  NOT NULL,
+    content      TEXT          NOT NULL,
+    is_published BOOLEAN       NOT NULL DEFAULT TRUE,
+    created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_entries_category  ON kb_entries(category);
+CREATE INDEX IF NOT EXISTS idx_kb_entries_published ON kb_entries(is_published, category);
+
+-- ─── Student Support Tickets ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS kb_tickets (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category       VARCHAR(100)  NOT NULL,
+    title          VARCHAR(512)  NOT NULL,
+    content        TEXT,
+    student_email  VARCHAR(255)  NOT NULL,
+    student_name   VARCHAR(255),
+    status         VARCHAR(20)   NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'resolved')),
+    admin_response TEXT,
+    created_at     TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    resolved_at    TIMESTAMPTZ,
+    notified_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_kb_tickets_status ON kb_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_kb_tickets_email  ON kb_tickets(student_email);
+
+-- Password reset (forgot-password flow); safe to run on existing DBs
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash VARCHAR(64);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token_hash)
+    WHERE password_reset_token_hash IS NOT NULL;

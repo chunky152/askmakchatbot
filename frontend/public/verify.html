@@ -4,13 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Verify Email - AskMak</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <meta name="theme-color" content="#00a651">
+  <link rel="icon" href="/favicon.png" type="image/png" sizes="any">
+  <meta name="theme-color" content="#006B3C">
+  <meta name="color-scheme" content="light dark">
+  <script>
+    (function () {
+      try {
+        var k = localStorage.getItem('askmak-theme');
+        var dark =
+          k === 'dark'
+            ? true
+            : k === 'light'
+              ? false
+              : typeof matchMedia !== 'undefined' && matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', !!dark);
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
   <script src="/js/tailwind-config.js"></script>
   <link rel="stylesheet" href="/css/styles.css">
 </head>
-<body class="relative font-sans bg-transparent text-gray-900 dark:text-gray-100 min-h-dvh flex flex-col pb-[env(safe-area-inset-bottom,0px)]">
+<body class="login-page relative font-sans bg-transparent text-gray-900 dark:text-zinc-100 min-h-dvh flex flex-col pb-[env(safe-area-inset-bottom,0px)]">
 
   <div class="home-chatbot-bg" aria-hidden="true">
     <div class="home-chatbot-bg__mesh"></div>
@@ -33,13 +48,16 @@
   <main class="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-8">
     <div class="w-full max-w-md">
       <div class="text-center mb-6 sm:mb-8">
-        <img src="/assets/mak_logo.png" alt="Makerere University" class="h-14 sm:h-16 w-auto mx-auto mb-3">
-        <a href="/" class="text-xl sm:text-2xl font-bold tracking-tight text-mak-dark dark:text-white inline-block mb-2">Ask<span class="text-mak-green">Mak</span></a>
+        <div class="flex flex-col items-center gap-2 mb-3">
+          <img src="/assets/askmak%20logo%20lightmode.png" alt="AskMak" class="h-12 sm:h-14 w-auto max-w-[min(100%,14rem)] object-contain mx-auto dark:hidden" width="200" height="56" decoding="async" />
+          <img src="/assets/askmak%20logo%20darkmode.png" alt="AskMak" class="h-12 sm:h-14 w-auto max-w-[min(100%,14rem)] object-contain mx-auto hidden dark:block" width="200" height="56" decoding="async" />
+          <p class="text-[11px] sm:text-xs font-medium text-gray-500 dark:text-zinc-400 tracking-wide">Intelligent Campus Assistant</p>
+        </div>
         <div class="w-14 h-14 rounded-full bg-mak-green/10 text-mak-green flex items-center justify-center mx-auto my-4">
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
         </div>
-        <p class="text-sm text-gray-600 dark:text-gray-400 px-1 leading-snug max-w-sm mx-auto">Enter the 6-digit code printed in the terminal where the AskMak server is running (or from your email if email verification is enabled).</p>
-        <p id="verify-notice" class="hidden mt-3 text-xs text-gray-600 dark:text-gray-400 text-center leading-relaxed px-1"></p>
+        <p class="text-sm text-gray-600 dark:text-zinc-400 px-1 leading-snug max-w-sm mx-auto">Enter the 6-digit code printed in the terminal where the AskMak server is running (or from your email if email verification is enabled).</p>
+        <p id="verify-notice" class="hidden mt-3 text-xs text-gray-600 dark:text-zinc-400 text-center leading-relaxed px-1"></p>
       </div>
 
       <div class="rounded-2xl border border-gray-200/90 dark:border-gray-700/90 bg-white/90 dark:bg-gray-900/85 backdrop-blur-xl shadow-xl p-5 sm:p-7 ring-1 ring-white/60 dark:ring-white/[0.06]">

@@ -2,6 +2,8 @@ tailwind.config = {
   darkMode: 'class',
   /* Referenced from chat.js / sidebar.js strings (CDN JIT does not always scan those files). */
   safelist: [
+    /* admin.html typography (CDN JIT may not reliably scan HTML) */
+    'font-admin',
     /* chat.html layouts (CDN arbitrary values) */
     'max-lg:bg-zinc-50',
     'dark:bg-[#1e1e1e]',
@@ -71,6 +73,9 @@ tailwind.config = {
     'leading-snug',
     'prose-sm',
     'max-w-none',
+    'animate-assistant-in',
+    'animate-msg-user-in',
+    'msg-row-streaming',
     'prose-pre:overflow-x-auto',
     'prose-table:overflow-x-auto',
     'prose-table:block',
@@ -103,12 +108,16 @@ tailwind.config = {
       fontFamily: {
         /* Matches :root --font-sans in css/styles.css */
         sans: ['var(--font-sans)', 'Inter', 'system-ui', 'sans-serif'],
-        /* Chat assistant prose + chat.html body (loaded with /css/chat-fonts.css) */
+        /* admin.html body.admin-app + --font-admin in styles.css */
+        admin: ['var(--font-admin)', 'Plus Jakarta Sans', 'Inter', 'system-ui', 'sans-serif'],
+        /* Assistant markdown bubbles (prose-serif in chat.js); body/welcome/input stay Styrene B via styles.css */
         serif: ['"Anthropic Serif"', 'Georgia', 'Times New Roman', 'serif'],
       },
       animation: {
         'typing-bounce': 'typingBounce 1.4s infinite',
         'fade-in': 'fadeIn 0.3s ease',
+        'assistant-in': 'assistantIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both',
+        'msg-user-in': 'msgUserIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
         'toast-in': 'toastIn 0.3s ease',
         'modal-in': 'modalIn 0.2s ease',
         'hero-title': 'heroReveal 0.85s cubic-bezier(0.16, 1, 0.3, 1) both',
@@ -127,6 +136,14 @@ tailwind.config = {
         fadeIn: {
           from: { opacity: '0', transform: 'translateY(6px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        assistantIn: {
+          from: { opacity: '0', transform: 'translateY(12px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        msgUserIn: {
+          from: { opacity: '0', transform: 'translateY(8px) scale(0.985)' },
+          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
         toastIn: {
           from: { transform: 'translateX(100%)', opacity: '0' },

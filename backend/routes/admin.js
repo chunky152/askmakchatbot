@@ -22,6 +22,59 @@ function wordCountKb(s) {
     return (s || '').split(/\s+/).filter(Boolean).length;
 }
 
+function kbEntryDocumentSourceUrl(entryId) {
+    return 'kb-entry://' + String(entryId).trim();
+}
+
+async function removeKbSyncedDocuments(entryId) {
+    await db.query(`DELETE FROM documents WHERE source_url = $1`, [kbEntryDocumentSourceUrl(entryId)]);
+}
+
+/**
+ * Keep vector index aligned with a curated kb_entries row (Option A dual-store).
+ * Published → replace all chunks for kb-entry://id; draft → remove chunks.
+ */
+async function syncKbEntryDocuments(entry) {
+    const id = entry.id;
+    await removeKbSyncedDocuments(id);
+    if (!entry.is_published) {
+        return { ok: true, chunks: 0, mode: 'cleared_draft' };
+    }
+    const category = String(entry.category || 'faq').trim() || 'faq';
+    const title = String(entry.title || '').trim();
+    const body = String(entry.content || '').trim();
+    if (!title || !body) {
+        return { ok: false, chunks: 0, error: 'missing_title_or_content' };
+    }
+    const full = title + '\n\n' + body;
+    let chunks = chunkText(full).filter((c) => wordCountKb(c) >= MIN_KB_CHUNK_WORDS);
+    if (!chunks.length && full.length > 30) {
+        const fallback = full.substring(0, 8000);
+        if (wordCountKb(fallback) >= 4) chunks = [fallback];
+    }
+    if (!chunks.length) {
+        return { ok: false, chunks: 0, error: 'no_indexable_chunks' };
+    }
+    const baseSrc = kbEntryDocumentSourceUrl(id);
+    const chunkTitles = chunks.map((_, i) =>
+        chunks.length > 1 ? `${title} (part ${i + 1}/${chunks.length})` : title
+    );
+    const embedInputs = chunkTitles.map((t, i) => t + '\n\n' + chunks[i]);
+    const embeddings = await generateEmbeddings(embedInputs);
+    for (let i = 0; i < chunks.length; i++) {
+        const embeddingStr = '[' + embeddings[i].join(',') + ']';
+        const meta = { manual: true, kb_synced: true, kb_entry_id: String(id) };
+        await db.query(
+            `INSERT INTO documents (source_url, title, content, chunk_index, embedding, category, metadata)
+             VALUES ($1, $2, $3, $4, $5::vector, $6, $7::jsonb)
+             ON CONFLICT (source_url, chunk_index) DO UPDATE SET title = EXCLUDED.title, content = EXCLUDED.content,
+               embedding = EXCLUDED.embedding, category = EXCLUDED.category, metadata = EXCLUDED.metadata, indexed_at = NOW()`,
+            [baseSrc, chunkTitles[i], chunks[i], i, embeddingStr, category, JSON.stringify(meta)]
+        );
+    }
+    return { ok: true, chunks: chunks.length, mode: 'indexed' };
+}
+
 async function extractTextFromPdfBuffer(buffer) {
     const { PDFParse } = require('pdf-parse');
     const parser = new PDFParse({ data: buffer });
@@ -62,9 +115,16 @@ router.get('/stats', async (req, res, next) => {
     try {
         const today = await db.query(`SELECT COUNT(*)::int AS c FROM chats WHERE created_at::date = CURRENT_DATE`);
         const week = await db.query(`SELECT COUNT(*)::int AS c FROM chats WHERE created_at >= NOW() - INTERVAL '7 days'`);
+        const weekPrev = await db.query(
+            `SELECT COUNT(*)::int AS c FROM chats WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'`
+        );
         const month = await db.query(`SELECT COUNT(*)::int AS c FROM chats WHERE created_at >= NOW() - INTERVAL '30 days'`);
+        const totalChats = await db.query(`SELECT COUNT(*)::int AS c FROM chats`);
         const activeUsers = await db.query(
             `SELECT COUNT(DISTINCT user_id)::int AS c FROM chats WHERE user_id IS NOT NULL AND updated_at >= NOW() - INTERVAL '7 days'`
+        );
+        const activeUsersPrev = await db.query(
+            `SELECT COUNT(DISTINCT user_id)::int AS c FROM chats WHERE user_id IS NOT NULL AND updated_at >= NOW() - INTERVAL '14 days' AND updated_at < NOW() - INTERVAL '7 days'`
         );
         const guestWeek = await db.query(
             `SELECT COUNT(DISTINCT guest_token)::int AS c FROM chats WHERE guest_token IS NOT NULL AND created_at >= NOW() - INTERVAL '7 days'`
@@ -76,20 +136,84 @@ router.get('/stats', async (req, res, next) => {
         const tokensMonth = await db.query(
             `SELECT COALESCE(SUM(tokens_used),0)::bigint AS s FROM messages WHERE role = 'assistant' AND created_at >= date_trunc('month', NOW())`
         );
+        const docRows = await db.query(`SELECT COUNT(*)::int AS c FROM documents`);
+        const docSources = await db.query(`SELECT COUNT(DISTINCT source_url)::int AS c FROM documents`);
+        const docsIndexedWeek = await db.query(
+            `SELECT COUNT(*)::int AS c FROM documents WHERE indexed_at >= NOW() - INTERVAL '7 days'`
+        );
+        const docsIndexedPrev = await db.query(
+            `SELECT COUNT(*)::int AS c FROM documents WHERE indexed_at >= NOW() - INTERVAL '14 days' AND indexed_at < NOW() - INTERVAL '7 days'`
+        );
+        const feedbackRoll = await db.query(`
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE created_at >= NOW() - INTERVAL '7 days'
+                )::int AS recent_n,
+                COUNT(*) FILTER (
+                    WHERE rating IS TRUE AND created_at >= NOW() - INTERVAL '7 days'
+                )::int AS recent_pos,
+                COUNT(*) FILTER (
+                    WHERE created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'
+                )::int AS prev_n,
+                COUNT(*) FILTER (
+                    WHERE rating IS TRUE AND created_at >= NOW() - INTERVAL '14 days' AND created_at < NOW() - INTERVAL '7 days'
+                )::int AS prev_pos,
+                COUNT(*)::int AS feedback_total
+            FROM feedback
+        `);
         const inputCost = 0.0000025;
         const outputCost = 0.00001;
         const estCost = (parseInt(tokensMonth.rows[0].s, 10) || 0) * ((inputCost + outputCost) / 2);
 
+        const fr = feedbackRoll.rows[0] || {};
+        const recentN = fr.recent_n || 0;
+        const prevN = fr.prev_n || 0;
+        const satRecent = recentN > 0 ? fr.recent_pos / recentN : null;
+        const satPrev = prevN > 0 ? fr.prev_pos / prevN : null;
+        let satisfaction_pct = null;
+        let satisfaction_pts_delta = null;
+        if ((fr.feedback_total || 0) > 0) {
+            const allPos = await db.query(`SELECT COUNT(*) FILTER (WHERE rating IS TRUE)::int AS p, COUNT(*)::int AS n FROM feedback`);
+            const n = allPos.rows[0].n || 0;
+            if (n > 0) satisfaction_pct = Math.round((allPos.rows[0].p / n) * 1000) / 10;
+        }
+        if (satRecent != null && satPrev != null) {
+            satisfaction_pts_delta = Math.round((satRecent - satPrev) * 1000) / 10;
+        }
+
+        const cw = week.rows[0].c || 0;
+        const cp = weekPrev.rows[0].c || 0;
+        const au = activeUsers.rows[0].c || 0;
+        const ap = activeUsersPrev.rows[0].c || 0;
+        const diw = docsIndexedWeek.rows[0].c || 0;
+        const dip = docsIndexedPrev.rows[0].c || 0;
+
+        const pctDelta = (cur, prev) => {
+            if (prev > 0) return Math.round(((cur - prev) / prev) * 1000) / 10;
+            if (cur > 0) return null;
+            return 0;
+        };
+
         res.json({
             conversations_today: today.rows[0].c,
-            conversations_week: week.rows[0].c,
+            conversations_week: cw,
             conversations_month: month.rows[0].c,
-            active_users_7d: activeUsers.rows[0].c,
+            conversations_total: totalChats.rows[0].c,
+            active_users_7d: au,
             guest_sessions_week: guestWeek.rows[0].c,
             pending_escalations: pendingEsc.rows[0].c,
             avg_confidence_today: avgConf.rows[0].a,
             estimated_api_cost_month_usd: Math.round(estCost * 10000) / 10000,
-            tokens_this_month: parseInt(tokensMonth.rows[0].s, 10) || 0
+            tokens_this_month: parseInt(tokensMonth.rows[0].s, 10) || 0,
+            documents_chunks: docRows.rows[0].c,
+            documents_sources: docSources.rows[0].c,
+            satisfaction_pct,
+            trends: {
+                conversations_week_pct: pctDelta(cw, cp),
+                active_users_7d_pct: pctDelta(au, ap),
+                documents_indexed_week_pct: pctDelta(diw, dip),
+                satisfaction_pts_delta
+            }
         });
     } catch (err) {
         next(err);
@@ -118,6 +242,62 @@ router.get('/stats/categories', async (req, res, next) => {
              FROM documents GROUP BY 1 ORDER BY count DESC`
         );
         res.json({ categories: result.rows });
+    } catch (err) {
+        next(err);
+    }
+});
+
+/** Topic mix from user message text (keyword buckets; last N days). */
+router.get('/stats/topics', async (req, res, next) => {
+    try {
+        const days = Math.min(parseInt(req.query.days, 10) || 90, 365);
+        const result = await db.query(
+            `WITH user_msgs AS (
+                SELECT lower(content) AS c
+                FROM messages
+                WHERE role = 'user'
+                  AND created_at >= NOW() - ($1::int * INTERVAL '1 day')
+                  AND length(trim(content)) > 0
+            ),
+            tagged AS (
+                SELECT CASE
+                    WHEN c ~ 'admission|applicant|apply|intake|entry requirement|enroll' THEN 'Admissions'
+                    WHEN c ~ 'fee|tuition|payment|pay fees|billing|invoice|bursar' THEN 'Fees & payments'
+                    WHEN c ~ 'exam|test|assessment|quiz|result|grade|mark|gpa' THEN 'Exams & grades'
+                    WHEN c ~ 'graduat|degree|certificate|diploma|convocation' THEN 'Graduation'
+                    WHEN c ~ 'hostel|accommodation|housing|hall|dorm|residence' THEN 'Accommodation'
+                    WHEN c ~ 'library|borrow|book' THEN 'Library'
+                    WHEN c ~ 'register|registration|course|module|timetable|curriculum' THEN 'Courses & registration'
+                    WHEN c ~ 'scholarship|bursary|financial aid|sponsor' THEN 'Scholarships'
+                    WHEN c ~ 'deadline|due date|extension' THEN 'Deadlines'
+                    WHEN c ~ 'transcript|portal|student record' THEN 'Records & portal'
+                    ELSE 'Other topics'
+                END AS topic
+                FROM user_msgs
+            )
+            SELECT topic, COUNT(*)::int AS count
+            FROM tagged
+            GROUP BY topic
+            ORDER BY count DESC`,
+            [days]
+        );
+        const rows = result.rows.filter(r => r.count > 0);
+        const maxSlices = 6;
+        let segments = [];
+        if (rows.length === 0) {
+            segments = [];
+        } else if (rows.length <= maxSlices) {
+            segments = rows.map(r => ({ label: r.topic, value: r.count }));
+        } else {
+            segments = rows.slice(0, maxSlices - 1).map(r => ({ label: r.topic, value: r.count }));
+            const rest = rows.slice(maxSlices - 1).reduce((s, r) => s + r.count, 0);
+            if (rest > 0) {
+                const other = segments.find(x => x.label === 'Other topics');
+                if (other) other.value += rest;
+                else segments.push({ label: 'Other topics', value: rest });
+            }
+        }
+        res.json({ segments, days });
     } catch (err) {
         next(err);
     }
@@ -829,6 +1009,14 @@ router.put('/documents/:id', async (req, res, next) => {
                 meta = {};
             }
         }
+        const isKbEntrySync =
+            doc.source_url && String(doc.source_url).startsWith('kb-entry://');
+        if (isKbEntrySync) {
+            return res.status(403).json({
+                error:
+                    'This chunk is synced from Knowledge Base — edit the FAQ entry there so the browse view and assistant index stay in sync.'
+            });
+        }
         const isManual =
             (meta && meta.manual === true) ||
             (doc.source_url &&
@@ -853,19 +1041,47 @@ router.put('/documents/:id', async (req, res, next) => {
 
 router.delete('/documents/:id', async (req, res, next) => {
     try {
-        const row = await db.query('SELECT image_keys FROM documents WHERE id = $1', [req.params.id]);
-        if (!row.rows.length) return res.status(404).json({ error: 'Not found' });
-        let keys = row.rows[0].image_keys;
-        if (typeof keys === 'string') {
-            try { keys = JSON.parse(keys); } catch { keys = null; }
+        const sel = await db.query('SELECT id, source_url, image_keys FROM documents WHERE id = $1', [req.params.id]);
+        if (!sel.rows.length) return res.status(404).json({ error: 'Not found' });
+        const anchor = sel.rows[0];
+
+        let toDelete = sel.rows;
+        if (anchor.source_url && String(anchor.source_url).startsWith('kb-entry://')) {
+            const siblings = await db.query(
+                'SELECT id, image_keys FROM documents WHERE source_url = $1 ORDER BY chunk_index ASC',
+                [anchor.source_url]
+            );
+            toDelete = siblings.rows;
         }
-        if (Array.isArray(keys)) {
-            for (const k of keys) {
-                await storage.deleteFile(DOC_BUCKET, k).catch(() => {});
+
+        for (const doc of toDelete) {
+            let keys = doc.image_keys;
+            if (typeof keys === 'string') {
+                try {
+                    keys = JSON.parse(keys);
+                } catch {
+                    keys = null;
+                }
             }
+            if (Array.isArray(keys)) {
+                for (const k of keys) {
+                    await storage.deleteFile(DOC_BUCKET, k).catch(() => {});
+                }
+            }
+            await db.query('DELETE FROM documents WHERE id = $1', [doc.id]);
         }
-        await db.query('DELETE FROM documents WHERE id = $1', [req.params.id]);
-        res.json({ ok: true });
+
+        const removedKb = !!(anchor.source_url && String(anchor.source_url).startsWith('kb-entry://'));
+        res.json({
+            ok: true,
+            deleted: toDelete.length,
+            ...(removedKb
+                ? {
+                      warning:
+                          'Removed assistant index chunks linked to a Knowledge Base entry; the curated FAQ row is unchanged.'
+                  }
+                : {})
+        });
     } catch (err) {
         next(err);
     }
@@ -1074,6 +1290,263 @@ router.put('/settings', async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+});
+
+// ─── Admin: Rule-based Knowledge Base Entries ────────────────────────────────
+
+const nodemailer = require('nodemailer');
+
+function getKbMailTransport() {
+    if (!process.env.SMTP_HOST) return null;
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
+    const secure = process.env.SMTP_SECURE === 'true';
+    const opts = { host: process.env.SMTP_HOST, port, secure };
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        opts.auth = { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS };
+    }
+    if (port === 587 && !secure) opts.requireTLS = true;
+    return nodemailer.createTransport(opts);
+}
+
+async function sendTicketResolutionMail(to, studentName, ticketTitle, adminResponse) {
+    const transport = getKbMailTransport();
+    if (!transport) {
+        console.warn(`[AskMak] SMTP not configured — skipping ticket resolution email to ${to}`);
+        return false;
+    }
+    const name = studentName || 'Student';
+    const html = `
+        <p>Dear ${name},</p>
+        <p>Your support ticket <strong>"${ticketTitle}"</strong> has been resolved.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0">
+        <p><strong>Answer from the AskMak team:</strong></p>
+        <p style="background:#f9fafb;border-left:4px solid #00a651;padding:12px 16px;border-radius:4px">${adminResponse.replace(/\n/g, '<br>')}</p>
+        <p style="color:#6b7280;font-size:13px;margin-top:24px">
+            This answer has been added to the AskMak knowledge base so other students can benefit from it.<br>
+            Visit <a href="${process.env.CORS_ORIGIN || 'https://askmak.mak.ac.ug'}">AskMak</a> anytime for more help.
+        </p>
+        <p style="color:#6b7280;font-size:12px">— The Makerere University AskMak Team</p>`;
+    try {
+        await transport.sendMail({
+            from: process.env.SMTP_FROM || '"AskMak" <noreply@mak.ac.ug>',
+            to,
+            subject: `[AskMak] Your ticket has been resolved: "${ticketTitle}"`,
+            html
+        });
+        return true;
+    } catch (err) {
+        console.warn('[AskMak] Ticket resolution email failed:', err.message);
+        return false;
+    }
+}
+
+/** GET /api/admin/kb — list all KB entries */
+router.get('/kb', async (req, res, next) => {
+    try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const offset = (page - 1) * limit;
+        const cat = req.query.category || '';
+        const q = req.query.q || '';
+        const params = [];
+        const where = [];
+        let i = 1;
+        if (cat) { where.push(`category = $${i++}`); params.push(cat); }
+        if (q)   { where.push(`(title ILIKE $${i} OR content ILIKE $${i})`); params.push('%' + q + '%'); i++; }
+        const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+        params.push(limit, offset);
+        const rows = await db.query(
+            `SELECT id, category, title, LEFT(content,200) AS content_preview, is_published, created_at, updated_at
+             FROM kb_entries ${w} ORDER BY category, title LIMIT $${i} OFFSET $${i + 1}`,
+            params
+        );
+        const count = await db.query(`SELECT COUNT(*)::int AS c FROM kb_entries ${w}`, params.slice(0, -2));
+        res.json({ entries: rows.rows, total: count.rows[0].c, page, limit });
+    } catch (err) { next(err); }
+});
+
+/** GET /api/admin/kb/categories — distinct categories */
+router.get('/kb/categories', async (req, res, next) => {
+    try {
+        const r = await db.query(`SELECT DISTINCT category FROM kb_entries ORDER BY category`);
+        res.json({ categories: r.rows.map(row => row.category) });
+    } catch (err) { next(err); }
+});
+
+/** GET /api/admin/kb/:id — single KB entry (full content).
+ *  Keep /kb/categories registered above this route so "categories" is not parsed as :id. */
+router.get('/kb/:id', async (req, res, next) => {
+    try {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+            return res.status(404).json({ error: 'Not found' });
+        }
+        const r = await db.query(`SELECT * FROM kb_entries WHERE id = $1`, [req.params.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+        res.json({ entry: r.rows[0] });
+    } catch (err) { next(err); }
+});
+
+/** POST /api/admin/kb — create a KB entry */
+router.post('/kb', async (req, res, next) => {
+    try {
+        const { category, title, content, is_published } = req.body;
+        if (!category || !title || !content) {
+            return res.status(400).json({ error: 'category, title, and content are required' });
+        }
+        const r = await db.query(
+            `INSERT INTO kb_entries (category, title, content, is_published)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [category.trim(), title.trim(), content.trim(), is_published !== false]
+        );
+        const row = r.rows[0];
+        let index_sync = null;
+        try {
+            index_sync = await syncKbEntryDocuments(row);
+        } catch (syncErr) {
+            index_sync = { ok: false, error: syncErr.message || String(syncErr) };
+            console.warn('[AskMak] KB create→index sync failed:', syncErr.message);
+        }
+        res.status(201).json({ id: row.id, index_sync });
+    } catch (err) { next(err); }
+});
+
+/** PUT /api/admin/kb/:id — update a KB entry */
+router.put('/kb/:id', async (req, res, next) => {
+    try {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+            return res.status(404).json({ error: 'Not found' });
+        }
+        const { category, title, content, is_published } = req.body;
+        const cur = await db.query(`SELECT id FROM kb_entries WHERE id = $1`, [req.params.id]);
+        if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+        await db.query(
+            `UPDATE kb_entries SET category=$1, title=$2, content=$3, is_published=$4, updated_at=NOW() WHERE id=$5`,
+            [
+                (category || '').trim(),
+                (title || '').trim(),
+                (content || '').trim(),
+                is_published !== false,
+                req.params.id
+            ]
+        );
+        const full = await db.query(`SELECT * FROM kb_entries WHERE id = $1`, [req.params.id]);
+        const row = full.rows[0];
+        let index_sync = null;
+        try {
+            index_sync = await syncKbEntryDocuments(row);
+        } catch (syncErr) {
+            index_sync = { ok: false, error: syncErr.message || String(syncErr) };
+            console.warn('[AskMak] KB update→index sync failed:', syncErr.message);
+        }
+        res.json({ ok: true, index_sync });
+    } catch (err) { next(err); }
+});
+
+/** DELETE /api/admin/kb/:id */
+router.delete('/kb/:id', async (req, res, next) => {
+    try {
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(req.params.id)) {
+            return res.status(404).json({ error: 'Not found' });
+        }
+        await removeKbSyncedDocuments(req.params.id);
+        const r = await db.query(`DELETE FROM kb_entries WHERE id = $1 RETURNING id`, [req.params.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+        res.json({ ok: true });
+    } catch (err) { next(err); }
+});
+
+// ─── Admin: Support Tickets ───────────────────────────────────────────────────
+
+/** GET /api/admin/kb/tickets — list tickets */
+router.get('/kb-tickets', async (req, res, next) => {
+    try {
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const offset = (page - 1) * limit;
+        const status = req.query.status || '';
+        const params = [];
+        const where = [];
+        let i = 1;
+        if (status) { where.push(`status = $${i++}`); params.push(status); }
+        const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+        params.push(limit, offset);
+        const rows = await db.query(
+            `SELECT id, category, title, student_email, student_name, status, created_at, resolved_at
+             FROM kb_tickets ${w} ORDER BY created_at DESC LIMIT $${i} OFFSET $${i + 1}`,
+            params
+        );
+        const count = await db.query(`SELECT COUNT(*)::int AS c FROM kb_tickets ${w}`, params.slice(0, -2));
+        const pending = await db.query(`SELECT COUNT(*)::int AS c FROM kb_tickets WHERE status = 'pending'`);
+        res.json({ tickets: rows.rows, total: count.rows[0].c, pending_count: pending.rows[0].c, page, limit });
+    } catch (err) { next(err); }
+});
+
+/** GET /api/admin/kb-tickets/:id — single ticket detail */
+router.get('/kb-tickets/:id', async (req, res, next) => {
+    try {
+        const r = await db.query(`SELECT * FROM kb_tickets WHERE id = $1`, [req.params.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
+        res.json({ ticket: r.rows[0] });
+    } catch (err) { next(err); }
+});
+
+/** PATCH /api/admin/kb-tickets/:id — resolve ticket, notify student, optionally save KB entry */
+router.patch('/kb-tickets/:id', async (req, res, next) => {
+    try {
+        const { admin_response, save_as_kb_entry } = req.body;
+        if (!admin_response || !admin_response.trim()) {
+            return res.status(400).json({ error: 'admin_response is required to resolve a ticket' });
+        }
+        const cur = await db.query(`SELECT * FROM kb_tickets WHERE id = $1`, [req.params.id]);
+        if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
+        const ticket = cur.rows[0];
+
+        // Resolve ticket
+        await db.query(
+            `UPDATE kb_tickets
+             SET status='resolved', admin_response=$1, content=$1, resolved_at=NOW()
+             WHERE id=$2`,
+            [admin_response.trim(), req.params.id]
+        );
+
+        // Send notification email
+        let emailSent = false;
+        try {
+            emailSent = await sendTicketResolutionMail(
+                ticket.student_email,
+                ticket.student_name,
+                ticket.title,
+                admin_response.trim()
+            );
+            if (emailSent) {
+                await db.query(`UPDATE kb_tickets SET notified_at=NOW() WHERE id=$1`, [req.params.id]);
+            }
+        } catch (mailErr) {
+            console.warn('[AskMak] Email notification error:', mailErr.message);
+        }
+
+        // Optionally create a KB entry from the resolved ticket
+        let kbEntryId = null;
+        let entryIndexSync = null;
+        if (save_as_kb_entry) {
+            const kbInsert = await db.query(
+                `INSERT INTO kb_entries (category, title, content)
+                 VALUES ($1, $2, $3)
+                 RETURNING *`,
+                [ticket.category, ticket.title, admin_response.trim()]
+            );
+            const kbRow = kbInsert.rows[0];
+            kbEntryId = kbRow.id;
+            try {
+                entryIndexSync = await syncKbEntryDocuments(kbRow);
+            } catch (syncErr) {
+                entryIndexSync = { ok: false, error: syncErr.message || String(syncErr) };
+                console.warn('[AskMak] KB ticket→index sync failed:', syncErr.message);
+            }
+        }
+
+        res.json({ ok: true, email_sent: emailSent, kb_entry_id: kbEntryId, index_sync: entryIndexSync });
+    } catch (err) { next(err); }
 });
 
 module.exports = router;
