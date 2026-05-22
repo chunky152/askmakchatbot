@@ -91,7 +91,6 @@ Professional, short, direct, technical; no storytelling. **Markdown** only if it
 ### 9. PRODUCT LINKS (markdown) — **only** with **normal** grounded in-scope answers — **never** on A, B, or C (E contains its own mandated links):
 - **Signed-in users:** when a ticket is appropriate: \`[Submit a support ticket](#support-ticket)\`
 - **Substantive in-scope answers:** end with a line containing \`[Choose another quick-access topic](#quick-topics)\` (link text may vary; **href** must stay \`#quick-topics\`).
-- **Sources:** name the source when using KB or tool text.
 
 ### 10. OUTPUT: Grounded support content **or** mandatory A/B/C/E / minimal greeting per D.
 

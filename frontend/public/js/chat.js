@@ -357,6 +357,7 @@ var Chat = {
           msgs.scrollTop = msgs.scrollHeight;
         }
 
+        /* 
         if (data.type === 'sources' && data.sources) {
           var srcHtml = self.renderSources(data.sources);
           if (botDiv) {
@@ -364,6 +365,7 @@ var Chat = {
             if (wrapper) wrapper.insertAdjacentHTML('afterbegin', srcHtml);
           }
         }
+        */
 
         if (data.type === 'done') {
           if (botDiv) {
@@ -508,19 +510,6 @@ var Chat = {
     }
 
     return div;
-  },
-
-  renderSources: function(sources) {
-    if (!sources || !sources.length) return '';
-    var html = '<div class="flex flex-wrap gap-1.5">';
-    sources.forEach(function(s) {
-      html += '<a href="' + Utils.escapeHtml(s.url || '#') + '" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2.5 py-1 bg-zinc-100/80 dark:bg-mak-green/[0.08] rounded-full text-[11px] text-zinc-600 dark:text-zinc-300 no-underline hover:bg-zinc-200/90 dark:hover:bg-mak-green/15 transition">';
-      html += '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-      html += Utils.escapeHtml(Utils.truncate(s.title || s.url, 30));
-      html += '</a>';
-    });
-    html += '</div>';
-    return html;
   },
 
   renderActions: function(messageId) {
